@@ -14,21 +14,51 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "doomgeneric.h"
 #include "doomkeys.h"
 #include "i_system.h"
 
-#define GRADIENT \
-    " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
-#define GRADIENT_LEN (sizeof(GRADIENT) - 1)
+#include <ctype.h>
+#include <string.h>
 
+#define INPUT_BUFFER_LEN 16u
+#define EVENT_BUFFER_LEN ((INPUT_BUFFER_LEN) * 2u - 1u)
+#define GRADIENT " .:-=!*#%@&$"
+
+// #define GRADIENT \
+//     " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
+#define GRADIENT_LEN (sizeof(GRADIENT) - 1)
+#define CLK CLOCK_REALTIME
+
+#define UNLIKELY(x) __builtin_expect((x), 0)
+#define CALL(stmt, format)                          \
+    do {                                            \
+        if (UNLIKELY(stmt)) I_Error(format, errno); \
+    } while (0)
+#define CALL_STDOUT(stmt, format) CALL((stmt) == EOF, format)
+
+#define BYTE_TO_TEXT(buf, byte)              \
+    do {                                     \
+        *(buf)++ = '0' + (byte) / 100u;      \
+        *(buf)++ = '0' + (byte) / 10u % 10u; \
+        *(buf)++ = '0' + (byte) % 10u;       \
+    } while (0)
 struct color_t {
     uint32_t b : 8;
     uint32_t g : 8;
     uint32_t r : 8;
     uint32_t a : 8;
 };
+
+static char *output_buffer;
+static size_t output_buffer_size;
+static struct timespec ts_init;
+
+static unsigned char input_buffer[INPUT_BUFFER_LEN];
+static uint16_t event_buffer[EVENT_BUFFER_LEN];
+static uint16_t *event_buf_loc;
 
 static struct termios oldt;
 static struct timespec ts_init;
@@ -71,94 +101,192 @@ void render_ascii(uint32_t *buffer) {
     fflush(stdout);
 }
 
-// Original input reading function.
-void DG_ReadInput() {
-    unsigned char input_buffer[16];
-    struct timeval timeout = {0, 0};  // Zero timeout: non-blocking
-    fd_set read_fds;
-
-    FD_ZERO(&read_fds);
-    FD_SET(STDIN_FILENO, &read_fds);
-
-    // Check if input is available.
-    if (select(STDIN_FILENO + 1, &read_fds, NULL, NULL, &timeout) > 0) {
-        int bytes_read =
-            read(STDIN_FILENO, input_buffer, sizeof(input_buffer) - 1);
-        if (bytes_read > 0) {
-            for (int i = 0; i < bytes_read; i++) {
-                char c = input_buffer[i];
-
-                // If an escape character is found, check if enough bytes are
-                // available.
-                if (c == '\033') {
-                    if (i + 2 < bytes_read && input_buffer[i + 1] == '[') {
-                        char arrow = input_buffer[i + 2];
-                        i += 2;  // Consume the escape sequence.
-                        switch (arrow) {
-                            case 'A':
-                                // printf("ARROW UP PRESSED\n");
-                                break;
-                            case 'B':
-                                // printf("ARROW DOWN PRESSED\n");
-                                break;
-                            case 'C':
-                                // printf("ARROW RIGHT PRESSED\n");
-                                break;
-                            case 'D':
-                                // printf("ARROW LEFT PRESSED\n");
-                                break;
-                            default:
-                                // printf("UNKNOWN ESC SEQUENCE: \\033[%c\n",
-                                // arrow);
-                                break;
-                        }
-                    } else {
-                        // printf("ESC PRESSED\n");
-                    }
-                } else {
-                    // Process regular keys.
-                    switch (c) {
-                        case 'w':
-                        case 'W':
-                            // printf("UP PRESSED\n");
-                            break;
-                        case 's':
-                        case 'S':
-                            // printf("DOWN PRESSED\n");
-                            break;
-                        case 'a':
-                        case 'A':
-                            // printf("LEFT PRESSED\n");
-                            break;
-                        case 'd':
-                        case 'D':
-                            // printf("RIGHT PRESSED\n");
-                            break;
-                        case ' ':
-                            // printf("SHOOT (SPACE) PRESSED\n");
-                            break;
-                        case 'q':
-                            // printf("QUIT GAME\n");
-                            exit(0);
-                        default:
-                            // Handle additional keys if needed.
-                            break;
-                    }
-                }
-            }
-        }
-    }
+static unsigned char doomKeyIfTilda(const char **const buf, const unsigned char key)
+{
+	if (*((*buf) + 1) != '~')
+		return '\0';
+	(*buf)++;
+	return key;
 }
 
-// Input thread function: continuously poll input.
-void *DG_InputThread(void *arg) {
-    (void)arg;  // Unused parameter
-    while (1) {
-        DG_ReadInput();
-        // Sleep a short time to prevent busy-waiting.
-        usleep(1000);  // 1ms sleep
+static inline unsigned char convertCsiToDoomKey(const char **const buf)
+{
+	switch (**buf) {
+	case 'A':
+		return KEY_UPARROW;
+	case 'B':
+		return KEY_DOWNARROW;
+	case 'C':
+		return KEY_RIGHTARROW;
+	case 'D':
+		return KEY_LEFTARROW;
+	case 'H':
+		return KEY_HOME;
+	case 'F':
+		return KEY_END;
+	case '1':
+		switch (*((*buf) + 1)) {
+		case '5':
+			(*buf)++;
+			return doomKeyIfTilda(buf, KEY_F5);
+		case '7':
+			(*buf)++;
+			return doomKeyIfTilda(buf, KEY_F6);
+		case '8':
+			(*buf)++;
+			return doomKeyIfTilda(buf, KEY_F7);
+		case '9':
+			(*buf)++;
+			return doomKeyIfTilda(buf, KEY_F8);
+		default:
+			return '\0';
+		}
+	case '2':
+		switch (*((*buf) + 1)) {
+		case '0':
+			(*buf)++;
+			return doomKeyIfTilda(buf, KEY_F9);
+		case '1':
+			(*buf)++;
+			return doomKeyIfTilda(buf, KEY_F10);
+		case '3':
+			(*buf)++;
+			return doomKeyIfTilda(buf, KEY_F11);
+		case '4':
+			(*buf)++;
+			return doomKeyIfTilda(buf, KEY_F12);
+		case '~':
+			(*buf)++;
+			return KEY_INS;
+		default:
+			return '\0';
+		}
+	case '3':
+		return doomKeyIfTilda(buf, KEY_DEL);
+	case '5':
+		return doomKeyIfTilda(buf, KEY_PGUP);
+	case '6':
+		return doomKeyIfTilda(buf, KEY_PGDN);
+	default:
+		return '\0';
+	}
+}
+
+static inline unsigned char convertSs3ToDoomKey(const char **const buf)
+{
+	switch (**buf) {
+	case 'P':
+		return KEY_F1;
+	case 'Q':
+		return KEY_F2;
+	case 'R':
+		return KEY_F3;
+	case 'S':
+		return KEY_F4;
+	default:
+		return '\0';
+	}
+}
+
+static inline unsigned char convertToDoomKey(const char **const buf)
+{
+	switch (**buf) {
+	case '\012':
+		return KEY_ENTER;
+	case '\033':
+		switch (*((*buf) + 1)) {
+		case '[':
+			*buf += 2;
+			return convertCsiToDoomKey(buf);
+		case 'O':
+			*buf += 2;
+			return convertSs3ToDoomKey(buf);
+		default:
+			return KEY_ESCAPE;
+		}
+	default:
+		return tolower(**buf);
+	}
+}
+
+// Original input reading function.
+void DG_ReadInput(void) {
+    static unsigned char prev_input_buffer[INPUT_BUFFER_LEN];
+
+    memcpy(prev_input_buffer, input_buffer, INPUT_BUFFER_LEN);
+    memset(input_buffer, '\0', INPUT_BUFFER_LEN);
+    memset(event_buffer, '\0', 2u * (size_t)EVENT_BUFFER_LEN);
+    event_buf_loc = event_buffer;
+
+    static char raw_input_buffer[INPUT_BUFFER_LEN];
+    struct termios oldt, newt;
+
+    memset(raw_input_buffer, '\0', INPUT_BUFFER_LEN);
+
+    /* Disable canonical mode */
+    CALL(tcgetattr(STDIN_FILENO, &oldt), "DG_DrawFrame: tcgetattr error %d");
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON);
+    newt.c_cc[VMIN] = 0;
+    newt.c_cc[VTIME] = 0;
+    CALL(tcsetattr(STDIN_FILENO, TCSANOW, &newt),
+         "DG_DrawFrame: tcsetattr error %d");
+
+    CALL(read(2, raw_input_buffer, INPUT_BUFFER_LEN - 1u) < 0,
+         "DG_DrawFrame: read error %d");
+
+    CALL(tcsetattr(STDIN_FILENO, TCSANOW, &oldt),
+         "DG_DrawFrame: tcsetattr error %d");
+
+    /* Flush input buffer to prevent read of previous unread input */
+    CALL(tcflush(STDIN_FILENO, TCIFLUSH), "DG_DrawFrame: tcflush error %d");
+
+    /* create input buffer */
+    const char *raw_input_buf_loc = raw_input_buffer;
+    unsigned char *input_buf_loc = input_buffer;
+    while (*raw_input_buf_loc) {
+        const unsigned char inp = convertToDoomKey(&raw_input_buf_loc);
+        if (!inp) break;
+        *input_buf_loc++ = inp;
+        raw_input_buf_loc++;
     }
-    return NULL;
+    /* construct event array */
+    int i, j;
+    for (i = 0; input_buffer[i]; i++) {
+        /* skip duplicates */
+        for (j = i + 1; input_buffer[j]; j++) {
+            if (input_buffer[i] == input_buffer[j]) goto LBL_CONTINUE_1;
+        }
+
+        /* pressed events */
+        for (j = 0; prev_input_buffer[j]; j++) {
+            if (input_buffer[i] == prev_input_buffer[j]) goto LBL_CONTINUE_1;
+        }
+        *event_buf_loc++ = 0x0100 | input_buffer[i];
+
+    LBL_CONTINUE_1:;
+    }
+
+    /* depressed events */
+    for (i = 0; prev_input_buffer[i]; i++) {
+        for (j = 0; input_buffer[j]; j++) {
+            if (prev_input_buffer[i] == input_buffer[j]) goto LBL_CONTINUE_2;
+        }
+        *event_buf_loc++ = 0xFF & prev_input_buffer[i];
+
+    LBL_CONTINUE_2:;
+    }
+
+    event_buf_loc = event_buffer;
+}
+
+int DG_GetKey(int *const pressed, unsigned char *const doomKey) {
+    if (!*event_buf_loc) return 0;
+
+    *pressed = *event_buf_loc >> 8;
+    *doomKey = *event_buf_loc & 0xFF;
+    event_buf_loc++;
+    return 1;
 }
 
 // Terminal cleanup: disable alternate screen and restore terminal settings.
@@ -170,46 +298,25 @@ void DG_AtExit(void) {
     printf("\033[0m\033[?25h\n");  // Reset colors and show cursor
 }
 
-// Terminal initialization: set non-canonical mode, allocate buffer, etc.
 void DG_Init() {
     struct termios t;
+    CALL(tcgetattr(STDIN_FILENO, &t), "DG_Init: tcgetattr error %d");
+    t.c_lflag &= ~(ECHO);
+    CALL(tcsetattr(STDIN_FILENO, TCSANOW, &t), "DG_Init: tcsetattr error %d");
+    CALL(atexit(&DG_AtExit), "DG_Init: atexit error %d");
 
-    // Save original terminal settings
-    tcgetattr(STDIN_FILENO, &oldt);
-    t = oldt;
-    t.c_lflag &= ~(ECHO | ICANON);
-    // Set VMIN and VTIME so that read() returns immediately.
-    t.c_cc[VMIN] = 0;
-    t.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &t);
-
-    // Set file descriptor to non-blocking mode.
-    fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
-
-    // Register exit cleanup function.
-    atexit(DG_AtExit);
-
-    // Allocate output buffer.
-    output_buffer_size = (WIDTH + 1) * (HEIGHT / 2) + 1;
+    /* Longest SGR code: \033[38;2;RRR;GGG;BBBm (length 19)
+     * Maximum 21 bytes per pixel: SGR + 2 x char
+     * 1 Newline character per line
+     * SGR clear code: \033[0m (length 4)
+     */
+    output_buffer_size =
+        21u * DOOMGENERIC_RESX * DOOMGENERIC_RESY + DOOMGENERIC_RESY + 4u;
     output_buffer = malloc(output_buffer_size);
 
-    // Initialize time for tick calculations.
-    clock_gettime(CLOCK_MONOTONIC, &ts_init);
+    clock_gettime(CLK, &ts_init);
 
-    memset(output_buffer, 0, output_buffer_size);
-
-    // Hide cursor and enable alternate screen buffer to reduce flickering.
-    printf("\033[?25l");
-    printf("\033[?1049h");
-
-    // --- Create the input thread ---
-    pthread_t input_tid;
-    if (pthread_create(&input_tid, NULL, DG_InputThread, NULL) != 0) {
-        perror("pthread_create");
-        exit(EXIT_FAILURE);
-    }
-    // Optionally, detach the thread so it cleans up automatically:
-    pthread_detach(input_tid);
+    memset(input_buffer, '\0', INPUT_BUFFER_LEN);
 }
 
 void DG_DrawFrame() {
@@ -228,55 +335,6 @@ uint32_t DG_GetTicksMs() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (ts.tv_sec - ts_init.tv_sec) * 1000 +
            (ts.tv_nsec - ts_init.tv_nsec) / 1000000;
-}
-
-// Read input (Non-blocking)
-// (This function remains for compatibility, though in threaded mode you may not
-// need it.)
-int DG_GetKey(int *pressed, unsigned char *doomKey) {
-    static char input_buffer[16];
-    static int input_len = 0, index = 0;
-
-    // Read new input only if old buffer is empty.
-    if (index >= input_len) {
-        memset(input_buffer, 0, sizeof(input_buffer));
-        input_len = read(STDIN_FILENO, input_buffer, sizeof(input_buffer) - 1);
-        index = 0;
-        if (input_len <= 0) return 0;
-    }
-
-    char c = input_buffer[index++];
-    *pressed = 1;
-
-    switch (c) {
-        case '\033':  // Escape sequences.
-            if (index < input_len && input_buffer[index] == '[') {
-                index++;
-                switch (input_buffer[index++]) {
-                    case 'A':
-                        return *doomKey = KEY_UPARROW, 1;
-                    case 'B':
-                        return *doomKey = KEY_DOWNARROW, 1;
-                    case 'C':
-                        return *doomKey = KEY_RIGHTARROW, 1;
-                    case 'D':
-                        return *doomKey = KEY_LEFTARROW, 1;
-                    case 'H':
-                        return *doomKey = KEY_HOME, 1;
-                    case 'F':
-                        return *doomKey = KEY_END, 1;
-                }
-            }
-            return *doomKey = KEY_ESCAPE, 1;
-        case '\n':
-            return *doomKey = KEY_ENTER, 1;
-        case '\t':
-            return *doomKey = KEY_TAB, 1;
-        case 127:
-            return *doomKey = KEY_BACKSPACE, 1;
-        default:
-            return *doomKey = c, 1;
-    }
 }
 
 // Set terminal title

@@ -33,7 +33,7 @@ SRC_DOOM= i_main.o dummy.o am_map.o doomdef.o doomstat.o \
           r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o \
           st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o \
           w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o \
-          doomgeneric.o doomgeneric_ascii.o  # Placed at the end
+          doomgeneric.o doomgeneric_ascii.o
 
 # Object files
 OBJS = $(addprefix $(OBJDIR)/, $(SRC_DOOM))

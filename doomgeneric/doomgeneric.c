@@ -16,24 +16,26 @@
 //
 
 #include "doomgeneric.h"
-
-#include "i_video.h"
 #include "m_argv.h"
+#include "i_video.h"
 
 unsigned DOOMGENERIC_RESX = 80;
 unsigned DOOMGENERIC_RESY = 50;
+
 uint32_t* DG_ScreenBuffer = 0;
 
-void dg_Create() {
-    int i;
-    i = M_CheckParmWithArgs("-scaling", 1);
+
+void dg_Create()
+{
+	int i;
+	i = M_CheckParmWithArgs("-scaling", 1);
     if (i > 0) {
-        i = atoi(myargv[i + 1]);
-        DOOMGENERIC_RESX = SCREENWIDTH / i;
-        DOOMGENERIC_RESY = SCREENHEIGHT / i;
-    }
+		i = atoi(myargv[i + 1]);
+		DOOMGENERIC_RESX = SCREENWIDTH / i;
+		DOOMGENERIC_RESY = SCREENHEIGHT / i;
+	}
 
-    DG_ScreenBuffer = malloc(DOOMGENERIC_RESX * DOOMGENERIC_RESY * 4);
+	DG_ScreenBuffer = malloc(DOOMGENERIC_RESX * DOOMGENERIC_RESY * 4);
 
-    DG_Init();
+	DG_Init();
 }

@@ -18,8 +18,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#if defined(FEATURE_SOUND) && !defined(__DJGPP__)
-#include <SDL_mixer.h>
+#ifdef ORIGCODE
+#include "SDL_mixer.h"
 #endif
 
 #include "config.h"
@@ -54,34 +54,64 @@ char *snd_musiccmd = "";
 
 // Low-level sound and music modules we are using
 
-static sound_module_t *sound_module = NULL;
-static music_module_t *music_module = NULL;
+static sound_module_t *sound_module;
+static music_module_t *music_module;
 
 int snd_musicdevice = SNDDEVICE_SB;
 int snd_sfxdevice = SNDDEVICE_SB;
+
+// Sound modules
+
+extern void I_InitTimidityConfig(void);
+extern sound_module_t sound_sdl_module;
+extern sound_module_t sound_pcsound_module;
+extern music_module_t music_sdl_module;
+extern music_module_t music_opl_module;
+
+// For OPL module:
+
+extern int opl_io_port;
+
+// For native music module:
+
+extern char *timidity_cfg_path;
 
 // DOS-specific options: These are unused but should be maintained
 // so that the config file can be shared between chocolate
 // doom and doom.exe
 
+#if ORIGCODE
 static int snd_sbport = 0;
 static int snd_sbirq = 0;
 static int snd_sbdma = 0;
 static int snd_mport = 0;
+#endif
 
 // Compiled-in sound modules:
 
 static sound_module_t *sound_modules[] = 
 {
-    #ifdef FEATURE_SOUND
-    &DG_sound_module,
-    #endif
+#ifdef FEATURE_SOUND
+    &sound_sdl_module,
+    &sound_pcsound_module,
+#endif
+    NULL,
+};
+
+// Compiled-in music modules:
+
+static music_module_t *music_modules[] =
+{
+#ifdef FEATURE_SOUND
+    &music_sdl_module,
+    &music_opl_module,
+#endif
     NULL,
 };
 
 // Check if a sound device is in the given list of devices
 
-static boolean SndDeviceInList(snddevice_t device, snddevice_t *list,
+static bool SndDeviceInList(snddevice_t device, snddevice_t *list,
                                int len)
 {
     int i;
@@ -100,7 +130,7 @@ static boolean SndDeviceInList(snddevice_t device, snddevice_t *list,
 // Find and initialize a sound_module_t appropriate for the setting
 // in snd_sfxdevice.
 
-static void InitSfxModule(boolean use_sfx_prefix)
+static void InitSfxModule(bool use_sfx_prefix)
 {
     int i;
 
@@ -130,9 +160,28 @@ static void InitSfxModule(boolean use_sfx_prefix)
 
 static void InitMusicModule(void)
 {
-#ifdef FEATURE_SOUND
-    music_module = &DG_music_module;
-#endif /* FEATURE_SOUND */
+    int i;
+
+    music_module = NULL;
+
+    for (i=0; music_modules[i] != NULL; ++i)
+    {
+        // Is the music device in the list of devices supported
+        // by this module?
+
+        if (SndDeviceInList(snd_musicdevice, 
+                            music_modules[i]->sound_devices,
+                            music_modules[i]->num_sound_devices))
+        {
+            // Initialize the module
+
+            if (music_modules[i]->Init())
+            {
+                music_module = music_modules[i];
+                return;
+            }
+        }
+    }
 }
 
 //
@@ -141,9 +190,9 @@ static void InitMusicModule(void)
 //  allocates channel buffer, sets S_sfx lookup.
 //
 
-void I_InitSound(boolean use_sfx_prefix)
+void I_InitSound(bool use_sfx_prefix)
 {  
-    boolean nosound, nosfx, nomusic;
+    bool nosound, nosfx, nomusic;
 
     //!
     // @vanilla
@@ -181,7 +230,7 @@ void I_InitSound(boolean use_sfx_prefix)
          && (snd_musicdevice == SNDDEVICE_GENMIDI
           || snd_musicdevice == SNDDEVICE_GUS))
         {
-            //I_InitTimidityConfig();
+            I_InitTimidityConfig();
         }
 
         if (!nosfx)
@@ -194,7 +243,6 @@ void I_InitSound(boolean use_sfx_prefix)
             InitMusicModule();
         }
     }
-
 }
 
 void I_ShutdownSound(void)
@@ -286,7 +334,7 @@ void I_StopSound(int channel)
     }
 }
 
-boolean I_SoundIsPlaying(int channel)
+bool I_SoundIsPlaying(int channel)
 {
     if (sound_module != NULL)
     {
@@ -308,10 +356,6 @@ void I_PrecacheSounds(sfxinfo_t *sounds, int num_sounds)
 
 void I_InitMusic(void)
 {
-    if(music_module != NULL)
-    {
-        music_module->Init();
-    }
 }
 
 void I_ShutdownMusic(void)
@@ -363,7 +407,7 @@ void I_UnRegisterSong(void *handle)
     }
 }
 
-void I_PlaySong(void *handle, boolean looping)
+void I_PlaySong(void *handle, bool looping)
 {
     if (music_module != NULL)
     {
@@ -379,7 +423,7 @@ void I_StopSong(void)
     }
 }
 
-boolean I_MusicIsPlaying(void)
+bool I_MusicIsPlaying(void)
 {
     if (music_module != NULL)
     {
@@ -389,11 +433,11 @@ boolean I_MusicIsPlaying(void)
     {
         return false;
     }
-    
 }
 
 void I_BindSoundVariables(void)
 {
+#ifdef ORIGCODE
     extern int use_libsamplerate;
     extern float libsamplerate_scale;
 
@@ -407,6 +451,11 @@ void I_BindSoundVariables(void)
     M_BindVariable("snd_musiccmd",      &snd_musiccmd);
     M_BindVariable("snd_samplerate",    &snd_samplerate);
     M_BindVariable("snd_cachesize",     &snd_cachesize);
+    M_BindVariable("opl_io_port",       &opl_io_port);
+
+    M_BindVariable("timidity_cfg_path", &timidity_cfg_path);
+    M_BindVariable("gus_patch_path",    &gus_patch_path);
+    M_BindVariable("gus_ram_kb",        &gus_ram_kb);
 
 #ifdef FEATURE_SOUND
     M_BindVariable("use_libsamplerate",   &use_libsamplerate);
@@ -416,5 +465,18 @@ void I_BindSoundVariables(void)
     // Before SDL_mixer version 1.2.11, MIDI music caused the game
     // to crash when it looped.  If this is an old SDL_mixer version,
     // disable MIDI.
+
+#ifdef __MACOSX__
+    {
+        const SDL_version *v = Mix_Linked_Version();
+
+        if (SDL_VERSIONNUM(v->major, v->minor, v->patch)
+          < SDL_VERSIONNUM(1, 2, 11))
+        {
+            snd_musicdevice = SNDDEVICE_NONE;
+        }
+    }
+#endif
+#endif
 }
 

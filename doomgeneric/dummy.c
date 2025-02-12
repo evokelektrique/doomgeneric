@@ -24,9 +24,9 @@
  *  public data                                                        *
  *---------------------------------------------------------------------*/
 
-boolean net_client_connected = false;
+bool net_client_connected = false;
 
-boolean drone = false;
+bool drone = false;
 
 /*---------------------------------------------------------------------*
  *  private data                                                       *
@@ -40,13 +40,9 @@ boolean drone = false;
  *  public functions                                                   *
  *---------------------------------------------------------------------*/
 
-#ifndef FEATURE_SOUND
-
 void I_InitTimidityConfig(void)
 {
 }
-
-#endif
 
 /*---------------------------------------------------------------------*
  *  eof                                                                *

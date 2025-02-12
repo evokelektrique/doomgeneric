@@ -54,7 +54,7 @@ typedef struct
     // Function to call to draw the screen from the source buffer.
     // Return true if draw was successful.
 
-    boolean (*DrawScreen)(int x1, int y1, int x2, int y2);
+    bool (*DrawScreen)(int x1, int y1, int x2, int y2);
 
     // If true, this is a "poor quality" mode.  The autoadjust
     // code should always attempt to use a different mode to this
@@ -86,10 +86,10 @@ typedef struct
     // that even higher resolutions would be needed before it would
     // look acceptable, but it turned out to be okay even at 640x480.
 
-    boolean poor_quality;
+    bool poor_quality;
 } screen_mode_t;
 
-typedef boolean (*grabmouse_callback_t)(void);
+typedef bool (*grabmouse_callback_t)(void);
 
 // Called by D_DoomMain,
 // determines the hardware configuration
@@ -116,7 +116,7 @@ void I_SetWindowTitle(char *title);
 void I_CheckIsScreensaver(void);
 void I_SetGrabMouseCallback(grabmouse_callback_t func);
 
-void I_DisplayFPSDots(boolean dots_on);
+void I_DisplayFPSDots(bool dots_on);
 void I_BindVideoVariables(void);
 
 void I_InitWindowTitle(void);
@@ -136,23 +136,15 @@ void I_StartTic (void);
 
 void I_EnableLoadingDisk(void);
 
-void I_EndRead (void);
-
-struct color {
-    uint32_t b:8;
-    uint32_t g:8;
-    uint32_t r:8;
-    uint32_t a:8;
-};
-
+void I_EndRead(void);
 
 extern char *video_driver;
-extern boolean screenvisible;
+extern bool screenvisible;
 
 extern float mouse_acceleration;
 extern int mouse_threshold;
 extern int vanilla_keyboard_mapping;
-extern boolean screensaver_mode;
+extern bool screensaver_mode;
 extern int usegamma;
 extern byte *I_VideoBuffer;
 
@@ -164,12 +156,5 @@ extern int aspect_ratio_correct;
 
 extern int show_diskicon;
 extern int diskicon_readbytes;
-
-#ifdef CMAP256
-
-extern boolean palette_changed;
-extern struct color colors[256];
-
-#endif  // CMAP256
 
 #endif
